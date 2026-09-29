@@ -18,6 +18,16 @@
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>GPL-2.0-or-later</project_license>
   <releases>
+    <release version="0.7.5.0" date="2026-09-30">
+      <description>
+        <p>
+          Adds an obs-websocket vendor API for external/AI-driven control
+          (list/start/stop/create/delete targets, read status, swap stream
+          keys), per-target enable/disable with color-coded status, config
+          export/import, and hotkeys.
+        </p>
+      </description>
+    </release>
     <release version="0.7.4.0" date="2026-07-31"/>
   </releases>
 </component>

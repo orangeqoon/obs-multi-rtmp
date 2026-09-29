@@ -7,6 +7,7 @@
 #include "edit-widget.h"
 #include "output-config.h"
 #include "protocols.h"
+#include "websocket-api.h"
 
 #include "obs.hpp"
 
@@ -102,6 +103,8 @@ class PushWidgetImpl : public PushWidget, public IOBSOutputEventHanlder
     QPushButton* btn_ = 0;
     QLabel* name_ = 0;
     QLabel* msg_ = 0;
+    QLabel* status_dot_ = 0;
+    QCheckBox* enabled_cb_ = 0;
 
     using clock = std::chrono::steady_clock;
     clock::time_point begin_time_;
@@ -118,6 +121,19 @@ class PushWidgetImpl : public PushWidget, public IOBSOutputEventHanlder
     bool using_main_audio_encoder_ = false;
     obs_view_t* scene_view_ = 0;
     bool isUseDelay_ = false;
+
+    // Status tracked for the obs-websocket vendor API (see websocket-api.cpp).
+    bool isConnecting_ = false;
+    bool isReconnecting_ = false;
+    int lastErrorCode_ = 0;
+    double lastBitrateBps_ = 0;
+    double lastFps_ = 0;
+
+    // Registered under the stable target id (not the display name) so key
+    // bindings survive renames. Their description label is set once at
+    // registration time and won't update if the target is renamed later.
+    obs_hotkey_id startHotkeyId_ = OBS_INVALID_HOTKEY_ID;
+    obs_hotkey_id stopHotkeyId_ = OBS_INVALID_HOTKEY_ID;
 
     QPushButton* GetDeleteButton() {
         return remove_btn_;
@@ -513,9 +529,11 @@ class PushWidgetImpl : public PushWidget, public IOBSOutputEventHanlder
             snprintf(strDuration, sizeof(strDuration), "%02d:%02d:%02d", (int)hh.count(), (int)mm.count(), (int)ss.count());
 
             char strFps[32] = { 0 };
-            snprintf(strFps, sizeof(strFps), "%d FPS", static_cast<int>(std::round((new_frames - total_frames_) / interval)));
+            lastFps_ = (new_frames - total_frames_) / interval;
+            snprintf(strFps, sizeof(strFps), "%d FPS", static_cast<int>(std::round(lastFps_)));
 
             auto bps = (new_bytes - total_bytes_) * 8 / interval;
+            lastBitrateBps_ = static_cast<double>(bps);
             auto strBps = [&]()-> std::string {
                 if (bps > 0)
                 {
@@ -542,6 +560,21 @@ class PushWidgetImpl : public PushWidget, public IOBSOutputEventHanlder
         last_info_time_ = now;
     }
 
+    void UpdateStatusDot() {
+        if (!status_dot_)
+            return;
+
+        const char* color = "#888888"; // stopped / idle
+        if (isReconnecting_ || isConnecting_)
+            color = "#e6b800"; // connecting / reconnecting
+        else if (IsRunning())
+            color = "#2ecc71"; // live
+        else if (lastErrorCode_ != 0)
+            color = "#e74c3c"; // last attempt failed
+
+        status_dot_->setStyleSheet(QString("color: %1;").arg(color));
+    }
+
 public:
     PushWidgetImpl(const std::string& targetid, QWidget* parent = 0)
         : QWidget(parent)
@@ -561,29 +594,67 @@ public:
         });
 
         auto layout = new QGridLayout(this);
-        layout->addWidget(name_ = new QLabel(obs_module_text("NewStreaming"), this), 0, 0, 1, 3);
-        layout->addWidget(btn_ = new QPushButton(obs_module_text("Btn.Start"), this), 1, 0);
+        layout->addWidget(status_dot_ = new QLabel(u8"●", this), 0, 0);
+        layout->addWidget(name_ = new QLabel(obs_module_text("NewStreaming"), this), 0, 1, 1, 3);
+
+        layout->addWidget(enabled_cb_ = new QCheckBox(this), 1, 0);
+        enabled_cb_->setToolTip(obs_module_text("Target.Enabled"));
+        QObject::connect(enabled_cb_, &QCheckBox::clicked, [this](bool checked) {
+            SetEnabled(checked);
+        });
+
+        layout->addWidget(btn_ = new QPushButton(obs_module_text("Btn.Start"), this), 1, 1);
         QObject::connect(btn_, &QPushButton::clicked, [this]() {
             StartStop();
         });
 
-        layout->addWidget(edit_btn_ = new QPushButton(obs_module_text("Btn.Edit"), this), 1, 1);
+        layout->addWidget(edit_btn_ = new QPushButton(obs_module_text("Btn.Edit"), this), 1, 2);
         QObject::connect(edit_btn_, &QPushButton::clicked, [this]() {
             ShowEditDlg();
         });
 
-        layout->addWidget(remove_btn_ = new QPushButton(obs_module_text("Btn.Delete"), this), 1, 2);
+        layout->addWidget(remove_btn_ = new QPushButton(obs_module_text("Btn.Delete"), this), 1, 3);
 
-        layout->addWidget(msg_ = new QLabel(u8"", this), 2, 0, 1, 3);
+        layout->addWidget(msg_ = new QLabel(u8"", this), 2, 0, 1, 4);
         msg_->setWordWrap(true);
         layout->addItem(new QSpacerItem(0, 10), 3, 0);
         setLayout(layout);
 
         LoadConfig();
+        UpdateStatusDot();
+
+        auto startDesc = std::string(obs_module_text("Hotkey.StartTarget")) + " - " + config_->name;
+        startHotkeyId_ = obs_hotkey_register_frontend(
+            ("obs-multi-rtmp.start." + targetid_).c_str(),
+            startDesc.c_str(),
+            [](void* data, obs_hotkey_id, obs_hotkey_t*, bool pressed) {
+                if (!pressed)
+                    return;
+                static_cast<PushWidgetImpl*>(data)->StartStreaming();
+            },
+            this
+        );
+
+        auto stopDesc = std::string(obs_module_text("Hotkey.StopTarget")) + " - " + config_->name;
+        stopHotkeyId_ = obs_hotkey_register_frontend(
+            ("obs-multi-rtmp.stop." + targetid_).c_str(),
+            stopDesc.c_str(),
+            [](void* data, obs_hotkey_id, obs_hotkey_t*, bool pressed) {
+                if (!pressed)
+                    return;
+                static_cast<PushWidgetImpl*>(data)->StopStreaming();
+            },
+            this
+        );
     }
-    
+
     ~PushWidgetImpl()
     {
+        if (startHotkeyId_ != OBS_INVALID_HOTKEY_ID)
+            obs_hotkey_unregister(startHotkeyId_);
+        if (stopHotkeyId_ != OBS_INVALID_HOTKEY_ID)
+            obs_hotkey_unregister(stopHotkeyId_);
+
         ReleaseOutput();
     }
 
@@ -591,6 +662,11 @@ public:
     void StartStreaming() override {
         if (IsRunning())
             return;
+
+        if (!config_->enabled) {
+            SetMsg(obs_module_text("Status.Disabled"));
+            return;
+        }
 
         // recreate output
         ReleaseOutput();
@@ -676,7 +752,14 @@ public:
         else
             obs_output_force_stop(output_);
     }
-   
+
+    void ForceStopStreaming() override
+    {
+        if (!IsRunning())
+            return;
+        obs_output_force_stop(output_);
+    }
+
     void OnOBSEvent(obs_frontend_event ev) override
     {
         if (ev == obs_frontend_event::OBS_FRONTEND_EVENT_EXIT
@@ -698,20 +781,87 @@ public:
     void LoadConfig()
     {
         name_->setText(QString::fromUtf8(config_->name));
+        if (enabled_cb_)
+            enabled_cb_->setChecked(config_->enabled);
     }
 
     void ResetInfo()
     {
         total_frames_ = 0;
         total_bytes_ = 0;
+        lastBitrateBps_ = 0;
+        lastFps_ = 0;
         last_info_time_ = clock::now();
         msg_->setText("");
     }
 
-    bool IsRunning()
+    bool IsRunning() override
     {
-        return output_ != nullptr && obs_output_active(output_); 
+        return output_ != nullptr && obs_output_active(output_);
     }
+
+    bool IsConnecting() override { return isConnecting_; }
+    bool IsReconnecting() override { return isReconnecting_; }
+    int GetLastErrorCode() override { return lastErrorCode_; }
+
+    std::string GetTargetId() override { return targetid_; }
+    std::string GetTargetName() override { return config_->name; }
+    std::string GetProtocol() override { return config_->protocol; }
+    bool GetSyncStart() override { return config_->syncStart; }
+    bool GetSyncStop() override { return config_->syncStop; }
+
+    bool GetEnabled() override { return config_->enabled; }
+
+    void SetEnabled(bool enabled) override
+    {
+        config_->enabled = enabled;
+        if (enabled_cb_ && enabled_cb_->isChecked() != enabled)
+            enabled_cb_->setChecked(enabled);
+        if (!enabled && IsRunning())
+            ForceStopStreaming();
+        SaveMultiOutputConfig();
+        UpdateStatusDot();
+    }
+
+    uint64_t GetDurationMs() override
+    {
+        if (!IsRunning())
+            return 0;
+        return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(clock::now() - begin_time_).count());
+    }
+
+    uint64_t GetBitrateBps() override { return static_cast<uint64_t>(lastBitrateBps_); }
+    double GetFps() override { return lastFps_; }
+
+    bool SetServiceSettings(const nlohmann::json& patch, bool merge, bool restartIfActive) override
+    {
+        if (!patch.is_object())
+            return false;
+
+        if (merge) {
+            for (auto it = patch.begin(); it != patch.end(); ++it)
+                config_->serviceParam[it.key()] = it.value();
+        } else {
+            config_->serviceParam = patch;
+        }
+
+        bool wasRunning = IsRunning();
+        if (wasRunning)
+            obs_output_force_stop(output_);
+
+        SaveMultiOutputConfig();
+
+        // StartStreaming() tears down and recreates output_ from scratch,
+        // picking up the patched service settings (e.g. a rolled-over
+        // stream key) in the process.
+        if (wasRunning && restartIfActive)
+            StartStreaming();
+
+        return true;
+    }
+
+    nlohmann::json GetServiceSettings() override { return config_->serviceParam; }
+    nlohmann::json GetOutputSettings() override { return config_->outputParam; }
 
     void StartStop()
     {
@@ -757,17 +907,24 @@ public:
     {
         GetGlobalService().RunInUIThread([this]() {
             begin_time_ = clock::now();
+            isConnecting_ = true;
+            isReconnecting_ = false;
+            lastErrorCode_ = 0;
             remove_btn_->setEnabled(false);
             btn_->setText(obs_module_text("Status.Stop"));
             btn_->setEnabled(true);
             SetMsg(obs_module_text("Status.Connecting"));
             remove_btn_->setEnabled(false);
+            UpdateStatusDot();
+            NotifyTargetStateChanged(targetid_, config_->name, "connecting", lastErrorCode_);
         });
     }
 
     void OnStarted() override
     {
         GetGlobalService().RunInUIThread([this]() {
+            isConnecting_ = false;
+            isReconnecting_ = false;
             remove_btn_->setEnabled(false);
             btn_->setText(obs_module_text("Status.Stop"));
             btn_->setEnabled(true);
@@ -775,6 +932,8 @@ public:
 
             ResetInfo();
             timer_->start();
+            UpdateStatusDot();
+            NotifyTargetStateChanged(targetid_, config_->name, "live", lastErrorCode_);
         });
     }
 
@@ -782,17 +941,21 @@ public:
     {
         GetGlobalService().RunInUIThread([this]() {
             timer_->stop();
+            isReconnecting_ = true;
 
             remove_btn_->setEnabled(false);
             btn_->setText(obs_module_text("Status.Stop"));
             btn_->setEnabled(true);
             SetMsg(obs_module_text("Status.Reconnecting"));
+            UpdateStatusDot();
+            NotifyTargetStateChanged(targetid_, config_->name, "reconnecting", lastErrorCode_);
         });
     }
 
     void OnReconnected() override
     {
         GetGlobalService().RunInUIThread([this]() {
+            isReconnecting_ = false;
             remove_btn_->setEnabled(false);
             btn_->setText(obs_module_text("Status.Stop"));
             btn_->setEnabled(true);
@@ -800,6 +963,8 @@ public:
 
             ResetInfo();
             timer_->start();
+            UpdateStatusDot();
+            NotifyTargetStateChanged(targetid_, config_->name, "live", lastErrorCode_);
         });
     }
 
@@ -820,6 +985,9 @@ public:
         GetGlobalService().RunInUIThread([this, code]() {
             ResetInfo();
             timer_->stop();
+            isConnecting_ = false;
+            isReconnecting_ = false;
+            lastErrorCode_ = code;
 
             remove_btn_->setEnabled(true);
             btn_->setText(obs_module_text("Btn.Start"));
@@ -847,6 +1015,9 @@ public:
                     SetMsg(obs_module_text("Error.Unknown"));
                     break;
             }
+
+            UpdateStatusDot();
+            NotifyTargetStateChanged(targetid_, config_->name, "stopped", lastErrorCode_);
         });
 
         ReleaseOutputEncoder();

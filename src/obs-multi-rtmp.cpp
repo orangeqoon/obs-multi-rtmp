@@ -4,11 +4,18 @@
 #include <regex>
 #include <filesystem>
 #include <unordered_map>
+#include <vector>
+
+#include <QFileDialog>
+#include <QFile>
+#include <QIODevice>
 
 #include "push-widget.h"
 #include "plugin-support.h"
 
 #include "output-config.h"
+#include "dock-registry.h"
+#include "websocket-api.h"
 
 #ifdef _WIN32
 #include <Windows.h>
@@ -25,6 +32,19 @@ public:
         QMetaObject::invokeMethod(uiThread_, [func = std::move(task)]() {
             func();
         });
+        return true;
+    }
+
+    bool RunInUIThreadBlocking(std::function<void()> task) override {
+        if (uiThread_ == nullptr)
+            return false;
+        if (QThread::currentThread() == uiThread_) {
+            task();
+            return true;
+        }
+        QMetaObject::invokeMethod(uiThread_, [func = std::move(task)]() {
+            func();
+        }, Qt::BlockingQueuedConnection);
         return true;
     }
 
@@ -143,7 +163,102 @@ public:
             for (auto x : GetAllPushWidgets())
                 x->StopStreaming();
         });
- 
+
+        // export / import config, so a target list (including stream keys)
+        // can be backed up or moved to another profile/PC instead of only
+        // ever living inside the current profile's obs-multi-rtmp.json
+        auto ioBtnContainer = new QWidget(this);
+        auto ioBtnLayout = new QHBoxLayout();
+        auto exportButton = new QPushButton(obs_module_text("Btn.ExportConfig"), ioBtnContainer);
+        ioBtnLayout->addWidget(exportButton);
+        auto importButton = new QPushButton(obs_module_text("Btn.ImportConfig"), ioBtnContainer);
+        ioBtnLayout->addWidget(importButton);
+        ioBtnContainer->setLayout(ioBtnLayout);
+        layout_->addWidget(ioBtnContainer);
+
+        QObject::connect(exportButton, &QPushButton::clicked, [this]() {
+            SaveConfig();
+
+            auto fileName = QFileDialog::getSaveFileName(
+                this,
+                obs_module_text("Btn.ExportConfig"),
+                "obs-multi-rtmp-config.json",
+                "JSON (*.json)"
+            );
+            if (fileName.isEmpty())
+                return;
+            if (!fileName.endsWith(".json", Qt::CaseInsensitive))
+                fileName += ".json";
+
+            auto content = SerializeMultiOutputConfig(GlobalMultiOutputConfig());
+
+            QFile file(fileName);
+            if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+                QMessageBox(
+                    QMessageBox::Icon::Critical,
+                    obs_module_text("Notice.Title"),
+                    obs_module_text("Error.ExportConfig"),
+                    QMessageBox::StandardButton::Ok,
+                    this
+                ).exec();
+                return;
+            }
+            file.write(content.c_str(), static_cast<qint64>(content.size()));
+        });
+
+        QObject::connect(importButton, &QPushButton::clicked, [this]() {
+            auto fileName = QFileDialog::getOpenFileName(
+                this,
+                obs_module_text("Btn.ImportConfig"),
+                QString(),
+                "JSON (*.json)"
+            );
+            if (fileName.isEmpty())
+                return;
+
+            QFile file(fileName);
+            if (!file.open(QIODevice::ReadOnly)) {
+                QMessageBox(
+                    QMessageBox::Icon::Critical,
+                    obs_module_text("Notice.Title"),
+                    obs_module_text("Error.ImportConfig"),
+                    QMessageBox::StandardButton::Ok,
+                    this
+                ).exec();
+                return;
+            }
+            auto bytes = file.readAll();
+
+            auto imported = DeserializeMultiOutputConfig(std::string(bytes.constData(), static_cast<size_t>(bytes.size())));
+            if (!imported.has_value()) {
+                QMessageBox(
+                    QMessageBox::Icon::Critical,
+                    obs_module_text("Notice.Title"),
+                    obs_module_text("Error.ImportConfig"),
+                    QMessageBox::StandardButton::Ok,
+                    this
+                ).exec();
+                return;
+            }
+
+            auto confirm = QMessageBox(
+                QMessageBox::Icon::Question,
+                obs_module_text("Question.Title"),
+                obs_module_text("Question.Import"),
+                QMessageBox::Yes | QMessageBox::No,
+                this
+            ).exec();
+            if (confirm != QMessageBox::Yes)
+                return;
+
+            for (auto x : GetAllPushWidgets())
+                x->ForceStopStreaming();
+
+            GlobalMultiOutputConfig() = *imported;
+            SaveConfig();
+            LoadConfig();
+        });
+
         // load and show outputs
         outputsContainer_ = new OutputsListWidget(container_);
         outputsContainer_->setDragDropMode(QAbstractItemView::InternalMove);
@@ -295,6 +410,30 @@ public:
         SaveMultiOutputConfig();
     }
 
+    // Used by the obs-websocket vendor API's create_target request (see
+    // websocket-api.cpp / dock-registry.h). Skips ShowEditDlg() - there's
+    // no one to click through a modal dialog for a headless caller.
+    PushWidget* CreateTargetHeadless(OutputTargetConfigPtr target)
+    {
+        GlobalMultiOutputConfig().targets.emplace_back(target);
+        auto pushWidget = AddPushWidget(target->id);
+        SaveConfig();
+        return pushWidget;
+    }
+
+    // Used by the vendor API's delete_target request. The "are you sure" /
+    // "not while live" gating happens in websocket-api.cpp before this is
+    // called - this just performs the removal, same as DeletePushWidget()
+    // but without the confirmation dialog the dock's own Delete button shows.
+    bool DeleteTargetHeadless(const std::string& targetId)
+    {
+        if (!FindById(GlobalMultiOutputConfig().targets, targetId))
+            return false;
+        DeletePushWidget(targetId);
+        SaveConfig();
+        return true;
+    }
+
     void OnOutputMoved(
         const QModelIndex &parent,
         int start,
@@ -440,6 +579,40 @@ private:
     }
 };
 
+// Set once in obs_module_load() and left alive for the plugin's lifetime,
+// same as the dock itself. Backs GetAllStreamTargets()/FindStreamTargetById()
+// for the obs-websocket vendor API (see websocket-api.cpp / dock-registry.h).
+static MultiOutputWidget* s_dock = nullptr;
+
+std::vector<PushWidget*> GetAllStreamTargets() {
+    std::vector<PushWidget*> result;
+    if (!s_dock)
+        return result;
+    for (auto x : s_dock->GetAllPushWidgets())
+        result.push_back(x);
+    return result;
+}
+
+PushWidget* FindStreamTargetById(const std::string& id) {
+    for (auto x : GetAllStreamTargets()) {
+        if (x->GetTargetId() == id)
+            return x;
+    }
+    return nullptr;
+}
+
+PushWidget* CreateStreamTarget(OutputTargetConfigPtr target) {
+    if (!s_dock)
+        return nullptr;
+    return s_dock->CreateTargetHeadless(std::move(target));
+}
+
+bool DeleteStreamTarget(const std::string& id) {
+    if (!s_dock)
+        return false;
+    return s_dock->DeleteTargetHeadless(id);
+}
+
 OBS_DECLARE_MODULE()
 OBS_MODULE_USE_DEFAULT_LOCALE("obs-multi-rtmp", "en-US")
 OBS_MODULE_AUTHOR("雷鳴 (@sorayukinoyume)")
@@ -460,6 +633,30 @@ bool obs_module_load()
         delete dock;
         return false;
     }
+    s_dock = dock;
+
+    obs_hotkey_register_frontend(
+        "obs-multi-rtmp.start_all",
+        obs_module_text("Hotkey.StartAllTargets"),
+        [](void*, obs_hotkey_id, obs_hotkey_t*, bool pressed) {
+            if (!pressed || !s_dock)
+                return;
+            for (auto x : s_dock->GetAllPushWidgets())
+                x->StartStreaming();
+        },
+        nullptr
+    );
+    obs_hotkey_register_frontend(
+        "obs-multi-rtmp.stop_all",
+        obs_module_text("Hotkey.StopAllTargets"),
+        [](void*, obs_hotkey_id, obs_hotkey_t*, bool pressed) {
+            if (!pressed || !s_dock)
+                return;
+            for (auto x : s_dock->GetAllPushWidgets())
+                x->StopStreaming();
+        },
+        nullptr
+    );
 
     blog(LOG_INFO, TAG "version: %s by SoraYuki https://github.com/sorayuki/obs-multi-rtmp/", PLUGIN_VERSION);
 
@@ -482,6 +679,14 @@ bool obs_module_load()
     );
 
     return true;
+}
+
+void obs_module_post_load(void)
+{
+    // obs-websocket-api.h requires vendor registration to happen only after
+    // all plugins have finished loading, so it's deferred to this
+    // post-load hook rather than done inline in obs_module_load().
+    RegisterWebsocketVendor();
 }
 
 const char *obs_module_description(void)
