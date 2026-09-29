@@ -860,6 +860,9 @@ public:
         return true;
     }
 
+    nlohmann::json GetServiceSettings() override { return config_->serviceParam; }
+    nlohmann::json GetOutputSettings() override { return config_->outputParam; }
+
     void StartStop()
     {
         if (IsRunning())
