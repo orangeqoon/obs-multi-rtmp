@@ -18,6 +18,15 @@
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>GPL-2.0-or-later</project_license>
   <releases>
+    <release version="0.7.5.1" date="2026-09-30">
+      <description>
+        <p>
+          Fixes a crash (obs-outputs.dll!flv_meta_data) caused by
+          StartStreaming() being re-entered for a target while its previous
+          connection attempt was still in flight.
+        </p>
+      </description>
+    </release>
     <release version="0.7.5.0" date="2026-09-30">
       <description>
         <p>
