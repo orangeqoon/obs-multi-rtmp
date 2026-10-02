@@ -48,7 +48,7 @@ this vendor emits, and a link to this doc:
 ```json
 {
   "vendor": "obs-multi-rtmp",
-  "docs": "https://github.com/sorayuki/obs-multi-rtmp/blob/master/WEBSOCKET_API.md",
+  "docs": "https://github.com/orangeqoon/obs-multi-rtmp/blob/master/WEBSOCKET_API.md",
   "events": ["target_state_changed"],
   "requests": [
     { "name": "list_targets", "description": "..." }
