@@ -50,7 +50,7 @@ refuse to drive an engine they don't understand:
 {
   "vendor": "obs-multi-rtmp",
   "docs": "https://github.com/orangeqoon/obs-multi-rtmp/blob/master/WEBSOCKET_API.md",
-  "apiVersion": 2,
+  "apiVersion": 3,
   "pluginVersion": "0.7.5.1",
   "events": ["target_state_changed", "emergency_stop"],
   "requests": [
@@ -60,7 +60,7 @@ refuse to drive an engine they don't understand:
 ```
 
 `apiVersion` is an integer capability level for this vendor API (this wave
-is `2`). `pluginVersion` is the plugin's release version string from
+is `3`). `pluginVersion` is the plugin's release version string from
 `buildspec.json`.
 
 ### `get_api_version`
@@ -70,10 +70,48 @@ No request fields. Lightweight version probe (same version fields as
 
 ```json
 {
-  "apiVersion": 2,
+  "apiVersion": 3,
   "pluginVersion": "0.7.5.1"
 }
 ```
+
+### `get_snapshot`
+
+No request fields. Any body (including `reveal_secrets`) is ignored — this
+request never returns stream keys or other secrets.
+
+One-shot snapshot so marust can reconcile engine state after connect or
+restart:
+
+```json
+{
+  "apiVersion": 3,
+  "pluginVersion": "0.7.5.1",
+  "observedAt": "2026-10-05T03:00:00Z",
+  "headless": false,
+  "targets": [
+    {
+      "id": "1234567890",
+      "name": "YouTube",
+      "enabled": true,
+      "state": "live",
+      "reconnects": 0,
+      "lastError": null,
+      "service": { "type": "RTMP", "server": "rtmp://a.rtmp.youtube.com/live2" }
+    }
+  ]
+}
+```
+
+- `observedAt` is UTC ISO-8601 (`…Z`).
+- `headless` mirrors the "hide destination dock" setting (`hide_dock`).
+- `state` is one of `"stopped"`, `"connecting"`, `"live"`, `"reconnecting"`,
+  `"stopping"`, `"error"`. (`stopping` is reserved; a settled failure with a
+  non-zero OBS stop code is reported as `"error"`.)
+- `reconnects` is the reconnect count since the current/last start attempt.
+- `lastError` is a human-readable string, or `null` when there is no error.
+- `service` carries only `type` (protocol id) and `server` — never a stream
+  key / token / password.
 
 ### `list_targets`
 

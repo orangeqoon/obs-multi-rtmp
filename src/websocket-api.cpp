@@ -15,6 +15,7 @@
 #include "output-config.h"
 #include "protocols.h"
 #include "plugin-support.h"
+#include "marust-snapshot.h"
 
 namespace {
 
@@ -396,6 +397,7 @@ void OnListCapabilities(obs_data_t*, obs_data_t* response_data, void*) {
         r["description"] = req.description;
         requests.push_back(r);
     }
+    AppendMarustRequestDescriptions(requests);
     SetResponseFromJson(response_data, BuildListCapabilitiesJson(PLUGIN_VERSION, requests));
 }
 
@@ -410,6 +412,7 @@ void RegisterWebsocketVendor() {
 
     for (auto& req : kRequests)
         obs_websocket_vendor_register_request(g_vendor, req.name, req.callback, nullptr);
+    RegisterMarustVendorRequests(g_vendor);
 
     blog(LOG_INFO, TAG "obs-websocket vendor API registered (vendor: \"obs-multi-rtmp\").");
 }

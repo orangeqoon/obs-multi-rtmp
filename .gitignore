@@ -20,6 +20,7 @@
 !README.md
 !FLATPAK.md
 !WEBSOCKET_API.md
+!MARUST.md
 
 # Exclude lock files
 *.lock.json

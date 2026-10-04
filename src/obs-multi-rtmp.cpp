@@ -17,6 +17,7 @@
 #include "dock-registry.h"
 #include "websocket-api.h"
 #include "emergency-stop-widget.h"
+#include "marust-shell.h"
 
 #ifdef _WIN32
 #include <Windows.h>
@@ -634,6 +635,7 @@ void ApplyDockVisibility(bool hideDock)
         s_emergencyDockWidget->setHideDockChecked(hideDock);
     if (s_dock)
         s_dock->SyncEmergencyStopCheckbox();
+    SyncMarustShellUi(hideDock);
 }
 
 std::vector<PushWidget*> GetAllStreamTargets() {
@@ -705,6 +707,7 @@ bool obs_module_load()
     s_destinationDockFrame = FindDockFrameFor(dock);
     s_emergencyDockFrame = FindDockFrameFor(emergency);
     ApplyDockVisibility(GlobalMultiOutputConfig().hideDock);
+    RegisterMarustShell(s_emergencyDockFrame);
 
     obs_hotkey_register_frontend(
         "obs-multi-rtmp.start_all",

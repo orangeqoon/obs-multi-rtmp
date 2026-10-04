@@ -8,7 +8,7 @@
 // so a small build-time check can validate the shapes documented in
 // WEBSOCKET_API.md without linking against OBS.
 
-inline constexpr int kObsMultiRtmpApiVersion = 2;
+inline constexpr int kObsMultiRtmpApiVersion = 3;
 
 inline nlohmann::json BuildApiVersionJson(const char* pluginVersion)
 {
