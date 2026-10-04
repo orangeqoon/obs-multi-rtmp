@@ -43,16 +43,35 @@ safety valves are built in and worth knowing up front:
 ### `list_capabilities`
 
 No request fields. Returns every request name + description, the events
-this vendor emits, and a link to this doc:
+this vendor emits, a link to this doc, plus version fields so callers can
+refuse to drive an engine they don't understand:
 
 ```json
 {
   "vendor": "obs-multi-rtmp",
   "docs": "https://github.com/orangeqoon/obs-multi-rtmp/blob/master/WEBSOCKET_API.md",
-  "events": ["target_state_changed"],
+  "apiVersion": 2,
+  "pluginVersion": "0.7.5.1",
+  "events": ["target_state_changed", "emergency_stop"],
   "requests": [
     { "name": "list_targets", "description": "..." }
   ]
+}
+```
+
+`apiVersion` is an integer capability level for this vendor API (this wave
+is `2`). `pluginVersion` is the plugin's release version string from
+`buildspec.json`.
+
+### `get_api_version`
+
+No request fields. Lightweight version probe (same version fields as
+`list_capabilities`, without the request/event catalog):
+
+```json
+{
+  "apiVersion": 2,
+  "pluginVersion": "0.7.5.1"
 }
 ```
 
@@ -237,9 +256,36 @@ Emitted whenever a target's state changes (connecting / live / reconnecting
   "id": "1234567890",
   "name": "YouTube",
   "state": "live",
-  "last_error_code": 0
+  "last_error_code": 0,
+  "reconnect_count": 0
 }
 ```
+
+`reconnect_count` is how many reconnect attempts have occurred since this
+target's current (or most recent) start attempt. It resets to `0` when a
+new start begins and increments on each OBS `reconnect` signal.
+`last_error_code` mirrors OBS's output stop codes (same values as
+`get_target_status`).
+
+### `emergency_stop`
+
+Emitted when the OBS-side emergency-stop button (1-second long press while
+any target is live / connecting / reconnecting) force-stops every target.
+Same stop path as `stop_all_targets`. Works even if marust is not running.
+
+```json
+{
+  "time": "2026-10-05T02:50:00+09:00",
+  "stopped_ids": ["1234567890", "9876543210"],
+  "count": 2
+}
+```
+
+`time` is a local-time ISO-8601 timestamp with numeric offset. `stopped_ids`
+lists targets that were active at the moment of the press; each of those
+targets also emits its own `target_state_changed` (`state: "stopped"`) as
+the force-stop completes. When every target is already stopped the button
+is red and a press does nothing (no event).
 
 Subscribe to vendor events via obs-websocket's general event subscription
 mechanism to build a dashboard or trigger notifications without polling.

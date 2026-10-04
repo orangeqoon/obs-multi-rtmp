@@ -59,7 +59,24 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
   ./src/obs-websocket-api.h
   ./src/websocket-api.h
   ./src/websocket-api.cpp
+  ./src/websocket-api-json.hpp
+  ./src/emergency-stop-widget.h
+  ./src/emergency-stop-widget.cpp
 )
+
+# Build-time check for vendor API JSON shapes (no OBS link required).
+add_executable(obs-multi-rtmp-json-api-check
+  ./tests/json-api-check.cpp
+)
+target_include_directories(obs-multi-rtmp-json-api-check PRIVATE
+  ./src
+  ./dep/nlohmann-json
+)
+add_custom_command(TARGET obs-multi-rtmp-json-api-check POST_BUILD
+  COMMAND "$<TARGET_FILE:obs-multi-rtmp-json-api-check>"
+  COMMENT "Running obs-multi-rtmp JSON API shape check"
+)
+add_dependencies(${CMAKE_PROJECT_NAME} obs-multi-rtmp-json-api-check)
 
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
   ./dep/nlohmann-json

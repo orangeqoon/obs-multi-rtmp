@@ -8,6 +8,8 @@
 !/data
 !/flatpak
 !/src
+!/tests
+!/docs
 !.clang-format
 !.gersemirc
 !.gitignore

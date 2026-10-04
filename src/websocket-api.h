@@ -1,6 +1,9 @@
 #pragma once
 
 #include <string>
+#include <vector>
+
+#include "json.hpp"
 
 // Bridges this plugin's stream targets to obs-websocket's vendor request API
 // (https://github.com/obsproject/obs-websocket), so external automation
@@ -19,8 +22,13 @@
 void RegisterWebsocketVendor();
 
 // Emits a "target_state_changed" vendor event: {id, name, state,
-// last_error_code}, where state is one of "connecting" / "live" /
-// "reconnecting" / "stopped". Safe to call before RegisterWebsocketVendor()
-// runs or when obs-websocket isn't installed (both are silently ignored).
-// Must be called from the UI thread.
-void NotifyTargetStateChanged(const std::string& id, const std::string& name, const std::string& state, int lastErrorCode);
+// last_error_code, reconnect_count}, where state is one of "connecting" /
+// "live" / "reconnecting" / "stopped". Safe to call before
+// RegisterWebsocketVendor() runs or when obs-websocket isn't installed
+// (both are silently ignored). Must be called from the UI thread.
+void NotifyTargetStateChanged(const std::string& id, const std::string& name, const std::string& state,
+                              int lastErrorCode, int reconnectCount);
+
+// Emits an "emergency_stop" vendor event after the OBS-side emergency-stop
+// button force-stops targets: {time, stopped_ids, count}.
+void NotifyEmergencyStop(const std::string& timeIso, const nlohmann::json& stoppedIds, int count);

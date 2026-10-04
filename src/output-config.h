@@ -58,6 +58,11 @@ using OutputTargetConfigPtr = std::shared_ptr<OutputTargetConfig>;
 
 struct MultiOutputConfig {
 public:
+    // When true, the destination-list dock is hidden and only the
+    // emergency-stop dock remains (marust drives targets over websocket).
+    // Default false keeps the classic dock layout.
+    bool hideDock = false;
+
     std::list<OutputTargetConfigPtr> targets;
     std::list<VideoEncoderConfigPtr> videoConfig;
     std::list<AudioEncoderConfigPtr> audioConfig;

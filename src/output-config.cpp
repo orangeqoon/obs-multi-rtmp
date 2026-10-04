@@ -108,6 +108,7 @@ static std::string SaveMultiOutputConfig(MultiOutputConfig& config) {
     json["targets"] = targets;
     json["video_configs"] = video_configs;
     json["audio_configs"] = audio_configs;
+    json["hide_dock"] = config.hideDock;
 
     blog(LOG_INFO, TAG "Save %d targets, %d video configs, %d audio configs", target_count, videocfg_count, audiocfg_count);
 
@@ -192,6 +193,7 @@ static MultiOutputConfig LoadMultiOutputConfig(const std::string& content) {
 
         auto json = nlohmann::json::parse(content);
         MultiOutputConfig config;
+        config.hideDock = GetJsonField<bool>(json, "hide_dock").value_or(false);
         auto it = json.find("targets");
         if (it != json.end() && it->type() == nlohmann::json::value_t::array) {
             for(auto& target_json: *it) {

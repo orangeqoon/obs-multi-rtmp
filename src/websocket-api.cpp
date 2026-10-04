@@ -10,9 +10,11 @@
 
 #include "obs-websocket-api.h"
 #include "websocket-api.h"
+#include "websocket-api-json.hpp"
 #include "dock-registry.h"
 #include "output-config.h"
 #include "protocols.h"
+#include "plugin-support.h"
 
 namespace {
 
@@ -351,6 +353,10 @@ void OnSetTargetEnabled(obs_data_t* request_data, obs_data_t* response_data, voi
     });
 }
 
+void OnGetApiVersion(obs_data_t*, obs_data_t* response_data, void*) {
+    SetResponseFromJson(response_data, BuildApiVersionJson(PLUGIN_VERSION));
+}
+
 // Defined after kRequests below (it lists kRequests's own contents), but
 // referenced by it, so only forward-declared here - taking a function's
 // address doesn't require its body to be visible yet.
@@ -378,15 +384,11 @@ const VendorRequest kRequests[] = {
     { "set_target_enabled", "Params: id, enabled. Enables/disables a target; disabling a live target force-stops it.", &OnSetTargetEnabled },
     { "create_target", "Params: name, protocol, service_settings, output_settings, sync_start, sync_stop, enabled (default false), dry_run (default false). Adds a new target; disabled by default until you explicitly enable it.", &OnCreateTarget },
     { "delete_target", "Params: id, confirm (must be true). Deletes a target; refused if it's currently live (stop_target it first).", &OnDeleteTarget },
-    { "list_capabilities", "Lists every vendor request this plugin registers, with a one-line description of each.", &OnListCapabilities },
+    { "list_capabilities", "Lists every vendor request this plugin registers, with a one-line description of each. Includes apiVersion and pluginVersion.", &OnListCapabilities },
+    { "get_api_version", "Returns apiVersion (integer) and pluginVersion (string).", &OnGetApiVersion },
 };
 
 void OnListCapabilities(obs_data_t*, obs_data_t* response_data, void*) {
-    nlohmann::json resp;
-    resp["vendor"] = "obs-multi-rtmp";
-    resp["docs"] = "https://github.com/sorayuki/obs-multi-rtmp/blob/master/WEBSOCKET_API.md";
-    resp["events"] = nlohmann::json::array({ "target_state_changed" });
-
     auto requests = nlohmann::json::array();
     for (auto& req : kRequests) {
         nlohmann::json r;
@@ -394,9 +396,7 @@ void OnListCapabilities(obs_data_t*, obs_data_t* response_data, void*) {
         r["description"] = req.description;
         requests.push_back(r);
     }
-    resp["requests"] = requests;
-
-    SetResponseFromJson(response_data, resp);
+    SetResponseFromJson(response_data, BuildListCapabilitiesJson(PLUGIN_VERSION, requests));
 }
 
 } // namespace
@@ -414,20 +414,30 @@ void RegisterWebsocketVendor() {
     blog(LOG_INFO, TAG "obs-websocket vendor API registered (vendor: \"obs-multi-rtmp\").");
 }
 
-void NotifyTargetStateChanged(const std::string& id, const std::string& name, const std::string& state, int lastErrorCode) {
+void NotifyTargetStateChanged(const std::string& id, const std::string& name, const std::string& state, int lastErrorCode,
+                              int reconnectCount) {
     if (!g_vendor)
         return;
 
-    nlohmann::json data;
-    data["id"] = id;
-    data["name"] = name;
-    data["state"] = state;
-    data["last_error_code"] = lastErrorCode;
-
+    auto data = BuildTargetStateChangedJson(id, name, state, lastErrorCode, reconnectCount);
     auto dumped = data.dump();
     OBSDataAutoRelease event_data = obs_data_create_from_json(dumped.c_str());
     if (!event_data)
         return;
 
     obs_websocket_vendor_emit_event(g_vendor, "target_state_changed", event_data);
+}
+
+void NotifyEmergencyStop(const std::string& timeIso, const nlohmann::json& stoppedIds, int count) {
+    if (!g_vendor)
+        return;
+
+    auto data = BuildEmergencyStopJson(timeIso, stoppedIds, count);
+    auto dumped = data.dump();
+    OBSDataAutoRelease event_data = obs_data_create_from_json(dumped.c_str());
+    if (!event_data)
+        return;
+
+    obs_websocket_vendor_emit_event(g_vendor, "emergency_stop", event_data);
+    blog(LOG_INFO, TAG "emergency_stop at %s (count=%d)", timeIso.c_str(), count);
 }

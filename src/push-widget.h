@@ -35,6 +35,8 @@ public:
     virtual bool IsConnecting() = 0;
     virtual bool IsReconnecting() = 0;
     virtual int GetLastErrorCode() = 0;
+    // How many reconnect attempts have occurred since the current/last start.
+    virtual int GetReconnectCount() = 0;
     virtual uint64_t GetDurationMs() = 0;
     virtual uint64_t GetBitrateBps() = 0;
     virtual double GetFps() = 0;

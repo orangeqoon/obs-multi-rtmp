@@ -138,6 +138,7 @@ class PushWidgetImpl : public PushWidget, public IOBSOutputEventHanlder
     bool isConnecting_ = false;
     bool isReconnecting_ = false;
     int lastErrorCode_ = 0;
+    int reconnectCount_ = 0;
     double lastBitrateBps_ = 0;
     double lastFps_ = 0;
 
@@ -821,6 +822,7 @@ public:
     bool IsConnecting() override { return isConnecting_; }
     bool IsReconnecting() override { return isReconnecting_; }
     int GetLastErrorCode() override { return lastErrorCode_; }
+    int GetReconnectCount() override { return reconnectCount_; }
 
     std::string GetTargetId() override { return targetid_; }
     std::string GetTargetName() override { return config_->name; }
@@ -928,13 +930,14 @@ public:
             isConnecting_ = true;
             isReconnecting_ = false;
             lastErrorCode_ = 0;
+            reconnectCount_ = 0;
             remove_btn_->setEnabled(false);
             btn_->setText(obs_module_text("Status.Stop"));
             btn_->setEnabled(true);
             SetMsg(obs_module_text("Status.Connecting"));
             remove_btn_->setEnabled(false);
             UpdateStatusDot();
-            NotifyTargetStateChanged(targetid_, config_->name, "connecting", lastErrorCode_);
+            NotifyTargetStateChanged(targetid_, config_->name, "connecting", lastErrorCode_, reconnectCount_);
         });
     }
 
@@ -952,7 +955,7 @@ public:
             ResetInfo();
             timer_->start();
             UpdateStatusDot();
-            NotifyTargetStateChanged(targetid_, config_->name, "live", lastErrorCode_);
+            NotifyTargetStateChanged(targetid_, config_->name, "live", lastErrorCode_, reconnectCount_);
         });
     }
 
@@ -961,13 +964,14 @@ public:
         GetGlobalService().RunInUIThread([this]() {
             timer_->stop();
             isReconnecting_ = true;
+            ++reconnectCount_;
 
             remove_btn_->setEnabled(false);
             btn_->setText(obs_module_text("Status.Stop"));
             btn_->setEnabled(true);
             SetMsg(obs_module_text("Status.Reconnecting"));
             UpdateStatusDot();
-            NotifyTargetStateChanged(targetid_, config_->name, "reconnecting", lastErrorCode_);
+            NotifyTargetStateChanged(targetid_, config_->name, "reconnecting", lastErrorCode_, reconnectCount_);
         });
     }
 
@@ -983,7 +987,7 @@ public:
             ResetInfo();
             timer_->start();
             UpdateStatusDot();
-            NotifyTargetStateChanged(targetid_, config_->name, "live", lastErrorCode_);
+            NotifyTargetStateChanged(targetid_, config_->name, "live", lastErrorCode_, reconnectCount_);
         });
     }
 
@@ -1037,7 +1041,7 @@ public:
             }
 
             UpdateStatusDot();
-            NotifyTargetStateChanged(targetid_, config_->name, "stopped", lastErrorCode_);
+            NotifyTargetStateChanged(targetid_, config_->name, "stopped", lastErrorCode_, reconnectCount_);
         });
 
         ReleaseOutputEncoder();

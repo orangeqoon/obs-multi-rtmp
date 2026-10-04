@@ -16,6 +16,7 @@
 #include "output-config.h"
 #include "dock-registry.h"
 #include "websocket-api.h"
+#include "emergency-stop-widget.h"
 
 #ifdef _WIN32
 #include <Windows.h>
@@ -115,6 +116,9 @@ private:
 };
 
 
+// Forward decl: defined after both docks exist (see obs_module_load).
+void ApplyDockVisibility(bool hideDock);
+
 class MultiOutputWidget : public QWidget
 {
 public:
@@ -127,6 +131,14 @@ public:
         layout_ = new QVBoxLayout(container_);
         layout_->setAlignment(Qt::AlignmentFlag::AlignTop);
         layout_->setSizeConstraint(QLayout::SetMinAndMaxSize);
+
+        // D7 emergency-stop (also hosts the headless/hide-dock checkbox).
+        // Shown inside the destination list dock when that dock is visible.
+        emergencyStop_ = new EmergencyStopWidget(container_, true);
+        emergencyStop_->setHideDockChangedCallback([](bool hide) {
+            ApplyDockVisibility(hide);
+        });
+        layout_->addWidget(emergencyStop_);
 
         // init widget
         auto addButton = new QPushButton(obs_module_text("Btn.NewTarget"), container_);
@@ -505,6 +517,8 @@ public:
 
         GlobalMultiOutputConfig() = {};
         if (!LoadMultiOutputConfig()) {
+            SyncEmergencyStopCheckbox();
+            ApplyDockVisibility(GlobalMultiOutputConfig().hideDock);
             return;
         }
 
@@ -512,11 +526,20 @@ public:
         {
             AddPushWidget(x->id);
         }
+        SyncEmergencyStopCheckbox();
+        ApplyDockVisibility(GlobalMultiOutputConfig().hideDock);
+    }
+
+    void SyncEmergencyStopCheckbox()
+    {
+        if (emergencyStop_)
+            emergencyStop_->setHideDockChecked(GlobalMultiOutputConfig().hideDock);
     }
 
 private:
     // Main widget of this module's dock
     QWidget* container_ = 0;
+    EmergencyStopWidget* emergencyStop_ = nullptr;
     // The layout of the root widget
     QVBoxLayout* layout_ = 0;
     // Scrollable area in case of overflows of content
@@ -583,6 +606,35 @@ private:
 // same as the dock itself. Backs GetAllStreamTargets()/FindStreamTargetById()
 // for the obs-websocket vendor API (see websocket-api.cpp / dock-registry.h).
 static MultiOutputWidget* s_dock = nullptr;
+static EmergencyStopWidget* s_emergencyDockWidget = nullptr;
+static QDockWidget* s_destinationDockFrame = nullptr;
+static QDockWidget* s_emergencyDockFrame = nullptr;
+
+static QDockWidget* FindDockFrameFor(QWidget* content)
+{
+    if (!content)
+        return nullptr;
+    for (QWidget* w = content->parentWidget(); w; w = w->parentWidget()) {
+        if (auto* dock = qobject_cast<QDockWidget*>(w))
+            return dock;
+    }
+    return nullptr;
+}
+
+void ApplyDockVisibility(bool hideDock)
+{
+    // Headless: hide the destination-list dock, keep the emergency-stop dock.
+    // Normal: show destination list (which embeds its own emergency button) and
+    // hide the standalone emergency dock so the classic layout stays clean.
+    if (s_destinationDockFrame)
+        s_destinationDockFrame->setVisible(!hideDock);
+    if (s_emergencyDockFrame)
+        s_emergencyDockFrame->setVisible(hideDock);
+    if (s_emergencyDockWidget)
+        s_emergencyDockWidget->setHideDockChecked(hideDock);
+    if (s_dock)
+        s_dock->SyncEmergencyStopCheckbox();
+}
 
 std::vector<PushWidget*> GetAllStreamTargets() {
     std::vector<PushWidget*> result;
@@ -634,6 +686,25 @@ bool obs_module_load()
         return false;
     }
     s_dock = dock;
+
+    // Standalone emergency-stop dock: the only UI left when hide_dock is on.
+    auto emergency = new EmergencyStopWidget(nullptr, true);
+    emergency->setObjectName("obs-multi-rtmp-emergency-dock-content");
+    emergency->setHideDockChangedCallback([](bool hide) {
+        ApplyDockVisibility(hide);
+    });
+    if (!obs_frontend_add_dock_by_id("obs-multi-rtmp-emergency-dock",
+                                     obs_module_text("EmergencyStop.Title"), emergency))
+    {
+        delete emergency;
+        // Destination dock already added; keep going without standalone panel.
+        emergency = nullptr;
+    }
+    s_emergencyDockWidget = emergency;
+
+    s_destinationDockFrame = FindDockFrameFor(dock);
+    s_emergencyDockFrame = FindDockFrameFor(emergency);
+    ApplyDockVisibility(GlobalMultiOutputConfig().hideDock);
 
     obs_hotkey_register_frontend(
         "obs-multi-rtmp.start_all",
