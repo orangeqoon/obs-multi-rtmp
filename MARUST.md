@@ -12,7 +12,6 @@ upstream の取り込みも難しくなります。
 
 ### 追加（marust 用・新規）
 - `src/marust-snapshot.cpp` / `src/marust-snapshot.h` / `src/marust-snapshot-json.hpp` — `get_snapshot`
-- `src/marust-shell.cpp` / `src/marust-shell.h` — Tools メニューとヘッドレス時のドック名
 - `src/emergency-stop-widget.cpp` / `.h` — 非常停止ボタン（D7）
 - `src/websocket-api-json.hpp` — vendor JSON の純関数
 - `tests/json-api-check.cpp` — ビルド時の JSON 形チェック
@@ -22,9 +21,9 @@ upstream の取り込みも難しくなります。
 
 ### 既存ファイルへの小さなフック（呼び出し数行程度）
 - `src/websocket-api.cpp` / `.h` — 版番号・イベント・`RegisterMarustVendorRequests` 呼び出し
-- `src/obs-multi-rtmp.cpp` — 非常停止ドック／`RegisterMarustShell`／`SyncMarustShellUi`
+- `src/obs-multi-rtmp.cpp` — 配信先一覧ドックの廃止（ドックは非常停止だけ）
 - `src/push-widget.cpp` / `.h` — `reconnect_count` 通知
-- `src/output-config.cpp` / `.h` — `hide_dock`
+- `src/output-config.cpp` / `.h` — `hide_dock`（今は使わない）
 - `CMakeLists.txt` / `.gitignore` / `data/locale/en-US.ini` / `ja-JP.ini`
 
 中核のままにしておきたいもの（upstream 追従時に衝突しやすい）:
@@ -73,6 +72,4 @@ cmake --build --preset windows-x64
 - vendor 名: `obs-multi-rtmp`（変更しない）
 - `apiVersion`: 3（`list_capabilities` / `get_api_version` / `get_snapshot`）
 - 突き合わせ: `get_snapshot`（秘密は含まない）
-- ヘッドレス: 設定 `hide_dock`。Tools メニュー
-  「marust エンジン: 配信先の一覧ドックを表示」で一覧ドックに戻れる
-- ヘッドレス時の非常停止ドック名: 「marust エンジン」
+- UI: 配信先一覧ドックは出さない（2026-10-06）。OBS に出るのは「非常停止」ドック（全停止ボタンだけ）。`headless` は常に true

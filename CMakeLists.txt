@@ -65,8 +65,6 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
   ./src/marust-snapshot-json.hpp
   ./src/marust-snapshot.h
   ./src/marust-snapshot.cpp
-  ./src/marust-shell.h
-  ./src/marust-shell.cpp
 )
 
 # Build-time check for vendor API JSON shapes (no OBS link required).

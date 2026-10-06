@@ -10,7 +10,6 @@
 #include "emergency-stop-widget.h"
 #include "dock-registry.h"
 #include "websocket-api.h"
-#include "output-config.h"
 
 namespace {
 
@@ -44,7 +43,7 @@ std::string NowLocalIso8601()
 
 } // namespace
 
-EmergencyStopWidget::EmergencyStopWidget(QWidget* parent, bool showHideDockCheckbox)
+EmergencyStopWidget::EmergencyStopWidget(QWidget* parent)
     : QWidget(parent)
 {
     auto layout = new QVBoxLayout(this);
@@ -54,18 +53,6 @@ EmergencyStopWidget::EmergencyStopWidget(QWidget* parent, bool showHideDockCheck
     button_->setMinimumHeight(40);
     button_->setCursor(Qt::PointingHandCursor);
     layout->addWidget(button_);
-
-    if (showHideDockCheckbox) {
-        hideDockCheck_ = new QCheckBox(obs_module_text("Setting.HideDock"), this);
-        hideDockCheck_->setChecked(GlobalMultiOutputConfig().hideDock);
-        layout->addWidget(hideDockCheck_);
-        QObject::connect(hideDockCheck_, &QCheckBox::toggled, this, [this](bool checked) {
-            GlobalMultiOutputConfig().hideDock = checked;
-            SaveMultiOutputConfig();
-            if (hideDockChanged_)
-                hideDockChanged_(checked);
-        });
-    }
 
     longPressTimer_ = new QTimer(this);
     longPressTimer_->setSingleShot(true);
@@ -81,15 +68,6 @@ EmergencyStopWidget::EmergencyStopWidget(QWidget* parent, bool showHideDockCheck
     QObject::connect(button_, &QPushButton::released, this, [this]() { onReleased(); });
 
     refresh();
-}
-
-void EmergencyStopWidget::setHideDockChecked(bool hide)
-{
-    if (hideDockCheck_ && hideDockCheck_->isChecked() != hide) {
-        hideDockCheck_->blockSignals(true);
-        hideDockCheck_->setChecked(hide);
-        hideDockCheck_->blockSignals(false);
-    }
 }
 
 void EmergencyStopWidget::applyAppearance(bool anyActive, int activeCount)

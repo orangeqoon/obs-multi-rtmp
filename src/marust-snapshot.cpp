@@ -106,7 +106,7 @@ nlohmann::json BuildLiveSnapshot()
         kObsMultiRtmpApiVersion,
         PLUGIN_VERSION,
         NowUtcIso8601(),
-        GlobalMultiOutputConfig().hideDock,
+        true, // headless: the destination list dock no longer exists
         targets);
 }
 

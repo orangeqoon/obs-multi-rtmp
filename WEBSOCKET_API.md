@@ -104,7 +104,7 @@ restart:
 ```
 
 - `observedAt` is UTC ISO-8601 (`…Z`).
-- `headless` mirrors the "hide destination dock" setting (`hide_dock`).
+- `headless` is always `true` (the destination list dock was removed; only the stop-all dock remains).
 - `state` is one of `"stopped"`, `"connecting"`, `"live"`, `"reconnecting"`,
   `"stopping"`, `"error"`. (`stopping` is reserved; a settled failure with a
   non-zero OBS stop code is reported as `"error"`.)
